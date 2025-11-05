@@ -15,7 +15,7 @@ export class InMemoryDataAdapter implements IIdempotencyDataAdapter {
 
     public async findByIdempotencyKey(
         idempotencyKey: string
-    ): Promise<IdempotencyResource> {
+    ): Promise<IdempotencyResource | null> {
         const result = this.idempotencyResources.filter((value) => {
             return value.idempotencyKey === idempotencyKey;
         });

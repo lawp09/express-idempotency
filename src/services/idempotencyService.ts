@@ -22,12 +22,22 @@ const HIT_HEADER = 'x-hit';
 const HIT_VALUE = 'true';
 
 /**
+ * Internal options type with all required fields
+ */
+interface RequiredIdempotencyOptions {
+    idempotencyKeyHeader: string;
+    dataAdapter: IdempotencyOptions['dataAdapter'] & object;
+    responseValidator: IdempotencyOptions['responseValidator'] & object;
+    intentValidator: IdempotencyOptions['intentValidator'] & object;
+}
+
+/**
  * This class represent the idempotency service.
  * It contains all the logic.
  */
 @boundClass
 export class IdempotencyService {
-    private _options: IdempotencyOptions;
+    private _options: RequiredIdempotencyOptions;
 
     /**
      * Constructor, used to initialize default values if options are not provided.
@@ -64,7 +74,7 @@ export class IdempotencyService {
         next: express.NextFunction
     ): Promise<void> {
         // Get the idempotency key to determine if there is something to process
-        const idempotencyKey: string = this.extractIdempotencyKeyFromReq(req);
+        const idempotencyKey = this.extractIdempotencyKeyFromReq(req);
         if (idempotencyKey) {
             res.setHeader(this._options.idempotencyKeyHeader, idempotencyKey);
 
@@ -89,7 +99,10 @@ export class IdempotencyService {
                     )
                 ) {
                     const availableResponse = resource.response;
-                    if (availableResponse) {
+                    if (
+                        availableResponse &&
+                        availableResponse.statusCode !== undefined
+                    ) {
                         // Set original headers
                         for (const header of Object.keys(
                             availableResponse.headers
@@ -150,7 +163,9 @@ export class IdempotencyService {
      */
     public async reportError(req: express.Request): Promise<void> {
         const idempotencyKey = this.extractIdempotencyKeyFromReq(req);
-        await this._options.dataAdapter.delete(idempotencyKey);
+        if (idempotencyKey) {
+            await this._options.dataAdapter.delete(idempotencyKey);
+        }
     }
 
     /**
@@ -173,7 +188,9 @@ export class IdempotencyService {
      * Extract idempotency key from request.
      * @param req
      */
-    public extractIdempotencyKeyFromReq(req: express.Request): string {
+    public extractIdempotencyKeyFromReq(
+        req: express.Request
+    ): string | undefined {
         return req.get(this._options.idempotencyKeyHeader);
     }
 
@@ -242,11 +259,10 @@ export class IdempotencyService {
     private sendHook(res: express.Response): Promise<any> {
         return new Promise<any>((resolve) => {
             const defaultSend = res.send.bind(res);
-            // @ts-ignore
-            res.send = (body?: any) => {
+            res.send = function (body?: any): express.Response {
                 resolve(body);
-                defaultSend(body);
-            };
+                return defaultSend(body);
+            } as typeof res.send;
         });
     }
 

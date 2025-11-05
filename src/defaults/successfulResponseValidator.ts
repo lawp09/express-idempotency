@@ -23,6 +23,7 @@ export class SuccessfulResponseValidator
         idempotencyResponse: IdempotencyResponse
     ): boolean {
         return (
+            idempotencyResponse.statusCode !== undefined &&
             idempotencyResponse.statusCode >= 200 &&
             idempotencyResponse.statusCode <= 299
         );

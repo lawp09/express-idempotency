@@ -14,10 +14,10 @@ import * as express from 'express';
 import sinon from 'sinon';
 
 describe('Idempotency service', () => {
-    let idempotencyService: IdempotencyService = null;
-    let intentValidator: DefaultIntentValidator = null;
-    let dataAdapter: InMemoryDataAdapter = null;
-    let responseValidator: SuccessfulResponseValidator = null;
+    let idempotencyService: IdempotencyService;
+    let intentValidator: DefaultIntentValidator;
+    let dataAdapter: InMemoryDataAdapter;
+    let responseValidator: SuccessfulResponseValidator;
 
     beforeEach(() => {
         intentValidator = new DefaultIntentValidator();

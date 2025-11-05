@@ -17,10 +17,10 @@ type expressMiddleware = (
 ) => Promise<void>;
 
 // Keep a single instance of the service
-let idempotencyService: IdempotencyService = null;
+let idempotencyService: IdempotencyService | null = null;
 
 export function getSharedIdempotencyService(): IdempotencyService {
-    if (idempotencyService) {
+    if (idempotencyService !== null) {
         return idempotencyService;
     }
     throw new Error(ERROR_MSG_NOT_INITIALIZED);

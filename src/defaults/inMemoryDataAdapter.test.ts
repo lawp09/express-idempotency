@@ -9,7 +9,7 @@ import {
 
 describe('In memory data adapter', () => {
     // Validator to test
-    let dataAdapter: InMemoryDataAdapter = null;
+    let dataAdapter: InMemoryDataAdapter;
 
     beforeEach(() => {
         dataAdapter = new InMemoryDataAdapter();
@@ -73,6 +73,7 @@ describe('In memory data adapter', () => {
         const idempotencyFound = await dataAdapter.findByIdempotencyKey(
             idempotencyResourceToFind.idempotencyKey
         );
+        assert.ok(idempotencyFound);
         assert.isUndefined(idempotencyFound.response);
 
         // Update it
@@ -84,6 +85,7 @@ describe('In memory data adapter', () => {
         const idempotencyFoundAgain = await dataAdapter.findByIdempotencyKey(
             idempotencyResourceToFind.idempotencyKey
         );
+        assert.ok(idempotencyFoundAgain);
         assert.deepEqual(idempotencyFoundAgain.response, idempotencyResponse);
     });
 
