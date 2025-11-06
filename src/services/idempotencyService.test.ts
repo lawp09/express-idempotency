@@ -214,6 +214,152 @@ describe('Idempotency service', () => {
             assert.ok(err);
         }
     });
+
+    it('handles response with statusCode undefined (corrupted data)', async () => {
+        // This tests our new strict check: availableResponse.statusCode !== undefined
+        const idempotencyKey = faker.string.uuid();
+        const req = httpMocks.createRequest({
+            url: 'https://test',
+            method: 'POST',
+            headers: {
+                'idempotency-key': idempotencyKey,
+            },
+        });
+
+        // Create corrupted resource with undefined statusCode
+        const corruptedResource: IdempotencyResource = {
+            idempotencyKey,
+            request: {
+                url: req.url,
+                method: req.method,
+                headers: req.headers,
+                body: req.body,
+                query: req.query,
+            },
+            response: {
+                statusCode: undefined, // Corrupted!
+                headers: {},
+                body: 'test',
+            },
+        };
+
+        // Stub data adapter to return corrupted resource
+        sinon
+            .stub(dataAdapter, 'findByIdempotencyKey')
+            .resolves(corruptedResource);
+
+        const res = httpMocks.createResponse();
+        const nextSpy = sinon.stub().callsFake((err?: Error) => {
+            if (err) {
+                throw err;
+            }
+        });
+
+        // Should treat as "request in progress" (no valid response)
+        try {
+            await idempotencyService.provideMiddlewareFunction(
+                req,
+                res,
+                nextSpy
+            );
+            assert.fail('Expected conflict error for corrupted response');
+        } catch (err) {
+            assert.ok(err);
+            assert.include(
+                (err as Error).message,
+                'A previous request is still in progress'
+            );
+        }
+    });
+
+    it('handles reportError without idempotency key', async () => {
+        // This tests our new check: if (idempotencyKey) before delete
+        const req = httpMocks.createRequest({
+            url: 'https://test',
+            method: 'POST',
+            // No idempotency-key header
+        });
+
+        const deleteSpy = sinon.spy(dataAdapter, 'delete');
+
+        // Should not throw and should not call delete
+        await idempotencyService.reportError(req);
+
+        assert.isFalse(deleteSpy.called);
+    });
+
+    it('verifies sendHook returns response for method chaining', async () => {
+        // This tests our bug fix: return defaultSend(body)
+        const req = createRequest();
+        const res = httpMocks.createResponse();
+        const nextSpy = sinon.spy();
+
+        await idempotencyService.provideMiddlewareFunction(req, res, nextSpy);
+
+        // Call send and verify it returns the response object
+        const result = res.send('test data');
+
+        // In Express, send() should return the response for chaining
+        assert.equal(result, res);
+    });
+
+    it('restores content-type header from cached response', async () => {
+        // This tests line 110: res.setHeader(header, availableResponse.headers[header])
+        const originalReq = createRequest();
+
+        // First request with content-type
+        const firstReq = createCloneRequest(originalReq);
+        const firstRes = httpMocks.createResponse();
+        firstRes.setHeader('content-type', 'application/json');
+
+        await idempotencyService.provideMiddlewareFunction(
+            firstReq,
+            firstRes,
+            sinon.spy()
+        );
+        firstRes.send({ data: 'test' });
+
+        // Wait for async processing
+        await wait(1);
+
+        // Second request should get the cached response with content-type
+        const secondReq = createCloneRequest(originalReq);
+        const secondRes = httpMocks.createResponse();
+
+        await idempotencyService.provideMiddlewareFunction(
+            secondReq,
+            secondRes,
+            sinon.spy()
+        );
+
+        // Verify content-type header was restored
+        assert.equal(secondRes.getHeader('content-type'), 'application/json');
+    });
+
+    it('handles data adapter findByIdempotencyKey error', async () => {
+        // This tests error handling for findByIdempotencyKey
+        const req = createRequest();
+        const res = httpMocks.createResponse();
+
+        sinon
+            .stub(dataAdapter, 'findByIdempotencyKey')
+            .rejects(new Error('Database error'));
+
+        const nextSpy = sinon.spy();
+
+        // Should propagate the error
+        try {
+            await idempotencyService.provideMiddlewareFunction(
+                req,
+                res,
+                nextSpy
+            );
+            assert.fail('Expected error to be thrown');
+        } catch (err) {
+            assert.ok(err);
+            assert.include((err as Error).message, 'Database error');
+        }
+    });
 });
 
 function createRequest(): express.Request {
