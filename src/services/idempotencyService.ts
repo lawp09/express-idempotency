@@ -216,38 +216,27 @@ export class IdempotencyService {
                     body
                 );
 
-                try {
-                    // Validate against conditions to determine if valid response
-                    if (
-                        this._options.responseValidator.isValidForPersistence(
-                            response
-                        )
-                    ) {
-                        const newResource: IdempotencyResource = {
-                            ...resource,
-                            response,
-                        };
-                        await this._options.dataAdapter.update(newResource);
-                    } else {
-                        await this._options.dataAdapter.delete(idempotencyKey);
-                    }
-                } catch (err) {
-                    console.log(
-                        'Error while validating response for persistence.'
-                    );
-                    throw err;
+                // Validate against conditions to determine if valid response
+                if (
+                    this._options.responseValidator.isValidForPersistence(
+                        response
+                    )
+                ) {
+                    const newResource: IdempotencyResource = {
+                        ...resource,
+                        response,
+                    };
+                    await this._options.dataAdapter.update(newResource);
+                } else {
+                    await this._options.dataAdapter.delete(idempotencyKey);
                 }
             })
             .catch(async () => {
                 try {
-                    console.log(
-                        'Something went wrong, try to remove idempotency...'
-                    );
+                    // Best-effort cleanup: try to remove the idempotency resource
                     await this._options.dataAdapter.delete(idempotencyKey);
                 } catch {
-                    console.log(
-                        'Error while removing idempotency key during failing hook.'
-                    );
+                    // Silently ignore cleanup errors - the resource will be retried or expire
                 }
             });
     }
