@@ -5,55 +5,46 @@
 import { IdempotencyResource, IIdempotencyDataAdapter } from '../models/models';
 
 /**
- * In memory data adapter is basically a map which store keys
- * and the associated resource.
- * Not great for production grade API. Should use a more adequate adapter.
+ * In memory data adapter using a Map for O(1) operations.
+ * Not recommended for production - use Redis or MongoDB adapter instead.
+ *
+ * Limitations:
+ * - No TTL: resources never expire (memory leak over time)
+ * - No size limit: vulnerable to memory exhaustion
+ * - Suitable for development and testing only
  */
 export class InMemoryDataAdapter implements IIdempotencyDataAdapter {
-    // Resource storage
-    private idempotencyResources: IdempotencyResource[] = [];
+    // Resource storage using Map for O(1) lookups
+    private idempotencyResources: Map<string, IdempotencyResource> = new Map();
 
     public async findByIdempotencyKey(
         idempotencyKey: string
     ): Promise<IdempotencyResource | null> {
-        const result = this.idempotencyResources.filter((value) => {
-            return value.idempotencyKey === idempotencyKey;
-        });
-
-        if (result.length === 0) {
-            return null;
-        }
-
-        return result[0];
+        return this.idempotencyResources.get(idempotencyKey) ?? null;
     }
 
     public async create(
         idempotencyResource: IdempotencyResource
     ): Promise<void> {
-        const resource = await this.findByIdempotencyKey(
-            idempotencyResource.idempotencyKey
-        );
-        if (resource) {
+        if (this.idempotencyResources.has(idempotencyResource.idempotencyKey)) {
             throw new Error('Duplicate');
         }
-        this.idempotencyResources.push(idempotencyResource);
+        this.idempotencyResources.set(
+            idempotencyResource.idempotencyKey,
+            idempotencyResource
+        );
     }
 
     public async update(
         idempotencyResource: IdempotencyResource
     ): Promise<void> {
-        const findIndex = this.idempotencyResources.findIndex(
-            (x) => x.idempotencyKey === idempotencyResource.idempotencyKey
+        this.idempotencyResources.set(
+            idempotencyResource.idempotencyKey,
+            idempotencyResource
         );
-        this.idempotencyResources[findIndex] = idempotencyResource;
     }
 
     public async delete(idempotencyKey: string): Promise<void> {
-        const findIndex = this.idempotencyResources.findIndex(
-            (x) => x.idempotencyKey === idempotencyKey
-        );
-        if (findIndex >= 0) {
-            this.idempotencyResources.splice(findIndex, 1);
-        }
+        this.idempotencyResources.delete(idempotencyKey);
     }
 }
