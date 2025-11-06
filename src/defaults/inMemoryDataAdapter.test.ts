@@ -119,6 +119,25 @@ describe('In memory data adapter', () => {
         );
         assert.isNull(idempotencyFound);
     });
+
+    it('update creates resource if key does not exist (upsert behavior)', async () => {
+        // This test documents that update() behaves as an upsert with Map implementation
+        const resource = createFakeIdempotencyResource();
+
+        // Verify resource does not exist initially
+        let found = await dataAdapter.findByIdempotencyKey(
+            resource.idempotencyKey
+        );
+        assert.isNull(found);
+
+        // Update without having called create first
+        await dataAdapter.update(resource);
+
+        // Verify the resource was created
+        found = await dataAdapter.findByIdempotencyKey(resource.idempotencyKey);
+        assert.ok(found);
+        assert.deepEqual(found, resource);
+    });
 });
 
 function createFakeIdempotencyRequest(): IdempotencyRequest {
