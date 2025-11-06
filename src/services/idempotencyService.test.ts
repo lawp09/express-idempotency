@@ -360,6 +360,629 @@ describe('Idempotency service', () => {
             assert.include((err as Error).message, 'Database error');
         }
     });
+
+    describe('Request header security', () => {
+        it('filters authorization header from stored request', async () => {
+            const req = httpMocks.createRequest({
+                url: 'https://test',
+                method: 'POST',
+                headers: {
+                    'idempotency-key': faker.string.uuid(),
+                    authorization: 'Bearer secret-token',
+                    'content-type': 'application/json',
+                },
+            });
+
+            const nextSpy = sinon.spy();
+            await idempotencyService.provideMiddlewareFunction(
+                req,
+                httpMocks.createResponse(),
+                nextSpy
+            );
+
+            // Verify resource was created without authorization header
+            const idempotencyKey =
+                idempotencyService.extractIdempotencyKeyFromReq(req);
+            const resource = await dataAdapter.findByIdempotencyKey(
+                idempotencyKey!
+            );
+            assert.ok(resource);
+            assert.isUndefined(resource.request.headers.authorization);
+            assert.equal(
+                resource.request.headers['content-type'],
+                'application/json'
+            );
+        });
+
+        it('filters cookie header from stored request', async () => {
+            const req = httpMocks.createRequest({
+                url: 'https://test',
+                method: 'POST',
+                headers: {
+                    'idempotency-key': faker.string.uuid(),
+                    cookie: 'session=abc123',
+                    'content-type': 'application/json',
+                },
+            });
+
+            const nextSpy = sinon.spy();
+            await idempotencyService.provideMiddlewareFunction(
+                req,
+                httpMocks.createResponse(),
+                nextSpy
+            );
+
+            const idempotencyKey =
+                idempotencyService.extractIdempotencyKeyFromReq(req);
+            const resource = await dataAdapter.findByIdempotencyKey(
+                idempotencyKey!
+            );
+            assert.ok(resource);
+            assert.isUndefined(resource.request.headers.cookie);
+            assert.equal(
+                resource.request.headers['content-type'],
+                'application/json'
+            );
+        });
+
+        it('filters x-api-key header from stored request', async () => {
+            const req = httpMocks.createRequest({
+                url: 'https://test',
+                method: 'POST',
+                headers: {
+                    'idempotency-key': faker.string.uuid(),
+                    'x-api-key': 'secret-api-key',
+                    'content-type': 'application/json',
+                },
+            });
+
+            const nextSpy = sinon.spy();
+            await idempotencyService.provideMiddlewareFunction(
+                req,
+                httpMocks.createResponse(),
+                nextSpy
+            );
+
+            const idempotencyKey =
+                idempotencyService.extractIdempotencyKeyFromReq(req);
+            const resource = await dataAdapter.findByIdempotencyKey(
+                idempotencyKey!
+            );
+            assert.ok(resource);
+            assert.isUndefined(resource.request.headers['x-api-key']);
+            assert.equal(
+                resource.request.headers['content-type'],
+                'application/json'
+            );
+        });
+
+        it('filters all sensitive headers: authorization, proxy-authorization, cookie, set-cookie, x-auth-token, x-csrf-token, x-xsrf-token', async () => {
+            const req = httpMocks.createRequest({
+                url: 'https://test',
+                method: 'POST',
+                headers: {
+                    'idempotency-key': faker.string.uuid(),
+                    authorization: 'Bearer token',
+                    'proxy-authorization': 'Basic token',
+                    cookie: 'session=123',
+                    'set-cookie': ['id=abc'],
+                    'x-auth-token': 'auth123',
+                    'x-csrf-token': 'csrf123',
+                    'x-xsrf-token': 'xsrf123',
+                    'content-type': 'application/json',
+                    accept: 'application/json',
+                },
+            });
+
+            const nextSpy = sinon.spy();
+            await idempotencyService.provideMiddlewareFunction(
+                req,
+                httpMocks.createResponse(),
+                nextSpy
+            );
+
+            const idempotencyKey =
+                idempotencyService.extractIdempotencyKeyFromReq(req);
+            const resource = await dataAdapter.findByIdempotencyKey(
+                idempotencyKey!
+            );
+            assert.ok(resource);
+
+            // All sensitive headers should be filtered
+            assert.isUndefined(resource.request.headers.authorization);
+            assert.isUndefined(resource.request.headers['proxy-authorization']);
+            assert.isUndefined(resource.request.headers.cookie);
+            assert.isUndefined(resource.request.headers['set-cookie']);
+            assert.isUndefined(resource.request.headers['x-auth-token']);
+            assert.isUndefined(resource.request.headers['x-csrf-token']);
+            assert.isUndefined(resource.request.headers['x-xsrf-token']);
+
+            // Non-sensitive headers should be preserved
+            assert.equal(
+                resource.request.headers['content-type'],
+                'application/json'
+            );
+            assert.equal(resource.request.headers.accept, 'application/json');
+        });
+
+        it('filters headers with x-auth- prefix', async () => {
+            const req = httpMocks.createRequest({
+                url: 'https://test',
+                method: 'POST',
+                headers: {
+                    'idempotency-key': faker.string.uuid(),
+                    'x-auth-custom': 'secret',
+                    'x-auth-bearer': 'token',
+                    'x-custom-header': 'safe-value',
+                },
+            });
+
+            const nextSpy = sinon.spy();
+            await idempotencyService.provideMiddlewareFunction(
+                req,
+                httpMocks.createResponse(),
+                nextSpy
+            );
+
+            const idempotencyKey =
+                idempotencyService.extractIdempotencyKeyFromReq(req);
+            const resource = await dataAdapter.findByIdempotencyKey(
+                idempotencyKey!
+            );
+            assert.ok(resource);
+            assert.isUndefined(resource.request.headers['x-auth-custom']);
+            assert.isUndefined(resource.request.headers['x-auth-bearer']);
+            assert.equal(
+                resource.request.headers['x-custom-header'],
+                'safe-value'
+            );
+        });
+
+        it('filters headers with x-token- prefix', async () => {
+            const req = httpMocks.createRequest({
+                url: 'https://test',
+                method: 'POST',
+                headers: {
+                    'idempotency-key': faker.string.uuid(),
+                    'x-token-refresh': 'refresh123',
+                    'x-token-access': 'access456',
+                    'x-custom-header': 'safe-value',
+                },
+            });
+
+            const nextSpy = sinon.spy();
+            await idempotencyService.provideMiddlewareFunction(
+                req,
+                httpMocks.createResponse(),
+                nextSpy
+            );
+
+            const idempotencyKey =
+                idempotencyService.extractIdempotencyKeyFromReq(req);
+            const resource = await dataAdapter.findByIdempotencyKey(
+                idempotencyKey!
+            );
+            assert.ok(resource);
+            assert.isUndefined(resource.request.headers['x-token-refresh']);
+            assert.isUndefined(resource.request.headers['x-token-access']);
+            assert.equal(
+                resource.request.headers['x-custom-header'],
+                'safe-value'
+            );
+        });
+
+        it('filters headers with x-secret- prefix', async () => {
+            const req = httpMocks.createRequest({
+                url: 'https://test',
+                method: 'POST',
+                headers: {
+                    'idempotency-key': faker.string.uuid(),
+                    'x-secret-key': 'secret123',
+                    'x-custom-header': 'safe-value',
+                },
+            });
+
+            const nextSpy = sinon.spy();
+            await idempotencyService.provideMiddlewareFunction(
+                req,
+                httpMocks.createResponse(),
+                nextSpy
+            );
+
+            const idempotencyKey =
+                idempotencyService.extractIdempotencyKeyFromReq(req);
+            const resource = await dataAdapter.findByIdempotencyKey(
+                idempotencyKey!
+            );
+            assert.ok(resource);
+            assert.isUndefined(resource.request.headers['x-secret-key']);
+            assert.equal(
+                resource.request.headers['x-custom-header'],
+                'safe-value'
+            );
+        });
+
+        it('filters headers with x-key- prefix', async () => {
+            const req = httpMocks.createRequest({
+                url: 'https://test',
+                method: 'POST',
+                headers: {
+                    'idempotency-key': faker.string.uuid(),
+                    'x-key-api': 'apikey123',
+                    'x-custom-header': 'safe-value',
+                },
+            });
+
+            const nextSpy = sinon.spy();
+            await idempotencyService.provideMiddlewareFunction(
+                req,
+                httpMocks.createResponse(),
+                nextSpy
+            );
+
+            const idempotencyKey =
+                idempotencyService.extractIdempotencyKeyFromReq(req);
+            const resource = await dataAdapter.findByIdempotencyKey(
+                idempotencyKey!
+            );
+            assert.ok(resource);
+            assert.isUndefined(resource.request.headers['x-key-api']);
+            assert.equal(
+                resource.request.headers['x-custom-header'],
+                'safe-value'
+            );
+        });
+
+        it('filters sensitive headers case-insensitively', async () => {
+            const req = httpMocks.createRequest({
+                url: 'https://test',
+                method: 'POST',
+                headers: {
+                    'idempotency-key': faker.string.uuid(),
+                    Authorization: 'Bearer token',
+                    COOKIE: 'session=123',
+                    'X-API-KEY': 'key123',
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            const nextSpy = sinon.spy();
+            await idempotencyService.provideMiddlewareFunction(
+                req,
+                httpMocks.createResponse(),
+                nextSpy
+            );
+
+            const idempotencyKey =
+                idempotencyService.extractIdempotencyKeyFromReq(req);
+            const resource = await dataAdapter.findByIdempotencyKey(
+                idempotencyKey!
+            );
+            assert.ok(resource);
+            // Express normalizes headers to lowercase, so check lowercase versions
+            assert.isUndefined(resource.request.headers.authorization);
+            assert.isUndefined(resource.request.headers.cookie);
+            assert.isUndefined(resource.request.headers['x-api-key']);
+            assert.equal(
+                resource.request.headers['content-type'],
+                'application/json'
+            );
+        });
+
+        it('preserves safe headers while filtering sensitive ones', async () => {
+            const req = httpMocks.createRequest({
+                url: 'https://test',
+                method: 'POST',
+                headers: {
+                    'idempotency-key': faker.string.uuid(),
+                    authorization: 'Bearer secret',
+                    'content-type': 'application/json',
+                    'content-length': '123',
+                    accept: 'application/json',
+                    'user-agent': 'Test/1.0',
+                    host: 'example.com',
+                },
+            });
+
+            const nextSpy = sinon.spy();
+            await idempotencyService.provideMiddlewareFunction(
+                req,
+                httpMocks.createResponse(),
+                nextSpy
+            );
+
+            const idempotencyKey =
+                idempotencyService.extractIdempotencyKeyFromReq(req);
+            const resource = await dataAdapter.findByIdempotencyKey(
+                idempotencyKey!
+            );
+            assert.ok(resource);
+
+            // Sensitive header should be filtered
+            assert.isUndefined(resource.request.headers.authorization);
+
+            // Safe headers should be preserved
+            assert.equal(
+                resource.request.headers['content-type'],
+                'application/json'
+            );
+            assert.equal(resource.request.headers['content-length'], '123');
+            assert.equal(resource.request.headers.accept, 'application/json');
+            assert.equal(resource.request.headers['user-agent'], 'Test/1.0');
+            assert.equal(resource.request.headers.host, 'example.com');
+        });
+
+        it('handles empty headers object', async () => {
+            const req = httpMocks.createRequest({
+                url: 'https://test',
+                method: 'POST',
+                headers: {
+                    'idempotency-key': faker.string.uuid(),
+                },
+            });
+
+            const nextSpy = sinon.spy();
+            await idempotencyService.provideMiddlewareFunction(
+                req,
+                httpMocks.createResponse(),
+                nextSpy
+            );
+
+            const idempotencyKey =
+                idempotencyService.extractIdempotencyKeyFromReq(req);
+            const resource = await dataAdapter.findByIdempotencyKey(
+                idempotencyKey!
+            );
+            assert.ok(resource);
+            assert.isDefined(resource.request.headers);
+        });
+    });
+
+    describe('Response header security', () => {
+        it('preserves whitelisted content headers in cached response', async () => {
+            const originalReq = createRequest();
+            const firstReq = createCloneRequest(originalReq);
+            const firstRes = httpMocks.createResponse();
+
+            // Set whitelisted headers
+            firstRes.setHeader('content-type', 'application/json');
+            firstRes.setHeader('content-length', '100');
+            firstRes.setHeader('content-encoding', 'gzip');
+
+            await idempotencyService.provideMiddlewareFunction(
+                firstReq,
+                firstRes,
+                sinon.spy()
+            );
+            firstRes.send({ data: 'test' });
+            await wait(1);
+
+            const secondReq = createCloneRequest(originalReq);
+            const secondRes = httpMocks.createResponse();
+            await idempotencyService.provideMiddlewareFunction(
+                secondReq,
+                secondRes,
+                sinon.spy()
+            );
+
+            assert.equal(
+                secondRes.getHeader('content-type'),
+                'application/json'
+            );
+            assert.equal(secondRes.getHeader('content-length'), '100');
+            assert.equal(secondRes.getHeader('content-encoding'), 'gzip');
+        });
+
+        it('preserves cache-control headers in cached response', async () => {
+            const originalReq = createRequest();
+            const firstReq = createCloneRequest(originalReq);
+            const firstRes = httpMocks.createResponse();
+
+            firstRes.setHeader('cache-control', 'no-cache');
+            firstRes.setHeader('expires', 'Wed, 21 Oct 2025 07:28:00 GMT');
+            firstRes.setHeader('etag', '"abc123"');
+
+            await idempotencyService.provideMiddlewareFunction(
+                firstReq,
+                firstRes,
+                sinon.spy()
+            );
+            firstRes.send({ data: 'test' });
+            await wait(1);
+
+            const secondReq = createCloneRequest(originalReq);
+            const secondRes = httpMocks.createResponse();
+            await idempotencyService.provideMiddlewareFunction(
+                secondReq,
+                secondRes,
+                sinon.spy()
+            );
+
+            assert.equal(secondRes.getHeader('cache-control'), 'no-cache');
+            assert.equal(
+                secondRes.getHeader('expires'),
+                'Wed, 21 Oct 2025 07:28:00 GMT'
+            );
+            assert.equal(secondRes.getHeader('etag'), '"abc123"');
+        });
+
+        it('preserves CORS headers in cached response', async () => {
+            const originalReq = createRequest();
+            const firstReq = createCloneRequest(originalReq);
+            const firstRes = httpMocks.createResponse();
+
+            firstRes.setHeader('access-control-allow-origin', '*');
+            firstRes.setHeader('access-control-allow-methods', 'GET, POST');
+            firstRes.setHeader('access-control-allow-headers', 'Content-Type');
+
+            await idempotencyService.provideMiddlewareFunction(
+                firstReq,
+                firstRes,
+                sinon.spy()
+            );
+            firstRes.send({ data: 'test' });
+            await wait(1);
+
+            const secondReq = createCloneRequest(originalReq);
+            const secondRes = httpMocks.createResponse();
+            await idempotencyService.provideMiddlewareFunction(
+                secondReq,
+                secondRes,
+                sinon.spy()
+            );
+
+            assert.equal(
+                secondRes.getHeader('access-control-allow-origin'),
+                '*'
+            );
+            assert.equal(
+                secondRes.getHeader('access-control-allow-methods'),
+                'GET, POST'
+            );
+            assert.equal(
+                secondRes.getHeader('access-control-allow-headers'),
+                'Content-Type'
+            );
+        });
+
+        it('preserves location and retry-after headers in cached response', async () => {
+            const originalReq = createRequest();
+            const firstReq = createCloneRequest(originalReq);
+            const firstRes = httpMocks.createResponse();
+
+            firstRes.setHeader('location', 'https://example.com/resource');
+            firstRes.setHeader('retry-after', '120');
+
+            await idempotencyService.provideMiddlewareFunction(
+                firstReq,
+                firstRes,
+                sinon.spy()
+            );
+            firstRes.send({ data: 'test' });
+            await wait(1);
+
+            const secondReq = createCloneRequest(originalReq);
+            const secondRes = httpMocks.createResponse();
+            await idempotencyService.provideMiddlewareFunction(
+                secondReq,
+                secondRes,
+                sinon.spy()
+            );
+
+            assert.equal(
+                secondRes.getHeader('location'),
+                'https://example.com/resource'
+            );
+            assert.equal(secondRes.getHeader('retry-after'), '120');
+        });
+
+        it('filters out non-whitelisted headers from cached response', async () => {
+            const originalReq = createRequest();
+            const firstReq = createCloneRequest(originalReq);
+            const firstRes = httpMocks.createResponse();
+
+            // Set both whitelisted and non-whitelisted headers
+            firstRes.setHeader('content-type', 'application/json');
+            firstRes.setHeader('x-custom-header', 'should-be-filtered');
+            firstRes.setHeader('server', 'Express');
+            firstRes.setHeader('x-powered-by', 'Node.js');
+
+            await idempotencyService.provideMiddlewareFunction(
+                firstReq,
+                firstRes,
+                sinon.spy()
+            );
+            firstRes.send({ data: 'test' });
+            await wait(1);
+
+            const secondReq = createCloneRequest(originalReq);
+            const secondRes = httpMocks.createResponse();
+            await idempotencyService.provideMiddlewareFunction(
+                secondReq,
+                secondRes,
+                sinon.spy()
+            );
+
+            // Whitelisted header should be preserved
+            assert.equal(
+                secondRes.getHeader('content-type'),
+                'application/json'
+            );
+
+            // Non-whitelisted headers should not be in cached response
+            assert.isUndefined(secondRes.getHeader('x-custom-header'));
+            assert.isUndefined(secondRes.getHeader('server'));
+            assert.isUndefined(secondRes.getHeader('x-powered-by'));
+        });
+
+        it('filters sensitive response headers like set-cookie', async () => {
+            const originalReq = createRequest();
+            const firstReq = createCloneRequest(originalReq);
+            const firstRes = httpMocks.createResponse();
+
+            firstRes.setHeader('content-type', 'application/json');
+            firstRes.setHeader('set-cookie', ['session=abc123; HttpOnly']);
+            firstRes.setHeader('authorization', 'Bearer token');
+
+            await idempotencyService.provideMiddlewareFunction(
+                firstReq,
+                firstRes,
+                sinon.spy()
+            );
+            firstRes.send({ data: 'test' });
+            await wait(1);
+
+            const secondReq = createCloneRequest(originalReq);
+            const secondRes = httpMocks.createResponse();
+            await idempotencyService.provideMiddlewareFunction(
+                secondReq,
+                secondRes,
+                sinon.spy()
+            );
+
+            // Whitelisted header should be preserved
+            assert.equal(
+                secondRes.getHeader('content-type'),
+                'application/json'
+            );
+
+            // Sensitive headers should not be cached
+            assert.isUndefined(secondRes.getHeader('set-cookie'));
+            assert.isUndefined(secondRes.getHeader('authorization'));
+        });
+
+        it('handles response header whitelist case-insensitively', async () => {
+            const originalReq = createRequest();
+            const firstReq = createCloneRequest(originalReq);
+            const firstRes = httpMocks.createResponse();
+
+            // Express typically lowercases headers, but test robustness
+            firstRes.setHeader('Content-Type', 'application/json');
+            firstRes.setHeader('Cache-Control', 'no-cache');
+
+            await idempotencyService.provideMiddlewareFunction(
+                firstReq,
+                firstRes,
+                sinon.spy()
+            );
+            firstRes.send({ data: 'test' });
+            await wait(1);
+
+            const secondReq = createCloneRequest(originalReq);
+            const secondRes = httpMocks.createResponse();
+            await idempotencyService.provideMiddlewareFunction(
+                secondReq,
+                secondRes,
+                sinon.spy()
+            );
+
+            // Headers should still be preserved despite case variations
+            assert.isDefined(
+                secondRes.getHeader('Content-Type') ||
+                    secondRes.getHeader('content-type')
+            );
+        });
+    });
 });
 
 function createRequest(): express.Request {

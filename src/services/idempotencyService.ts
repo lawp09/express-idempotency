@@ -169,15 +169,69 @@ export class IdempotencyService {
     }
 
     /**
+     * Sanitize request headers by filtering out sensitive information.
+     * Removes authentication tokens, cookies, API keys, and other sensitive headers
+     * to prevent credential leakage in storage.
+     *
+     * @param headers Original request headers
+     * @returns Sanitized headers without sensitive information
+     */
+    private sanitizeRequestHeaders(headers: any): any {
+        const sanitized: any = {};
+
+        // List of sensitive headers to exclude (case-insensitive)
+        const sensitiveHeaders = new Set([
+            'authorization',
+            'proxy-authorization',
+            'cookie',
+            'set-cookie',
+            'x-api-key',
+            'x-auth-token',
+            'x-csrf-token',
+            'x-xsrf-token',
+        ]);
+
+        // Sensitive header prefixes to exclude
+        const sensitivePrefixes = [
+            'x-auth-',
+            'x-token-',
+            'x-secret-',
+            'x-key-',
+        ];
+
+        for (const [key, value] of Object.entries(headers)) {
+            const lowerKey = key.toLowerCase();
+
+            // Skip if header is in sensitive list
+            if (sensitiveHeaders.has(lowerKey)) {
+                continue;
+            }
+
+            // Skip if header starts with sensitive prefix
+            if (
+                sensitivePrefixes.some((prefix) => lowerKey.startsWith(prefix))
+            ) {
+                continue;
+            }
+
+            // Keep non-sensitive headers
+            sanitized[key] = value;
+        }
+
+        return sanitized;
+    }
+
+    /**
      * Convert a request into a idempotency request which keeps only minimal representation.
-     * @param req
+     * Filters out sensitive headers (auth tokens, cookies, API keys) for security.
+     * @param req Express request
      */
     private convertToIdempotencyRequest(
         req: express.Request
     ): IdempotencyRequest {
         return {
             body: req.body,
-            headers: req.headers,
+            headers: this.sanitizeRequestHeaders(req.headers),
             method: req.method,
             query: req.query,
             url: req.url,
@@ -257,21 +311,52 @@ export class IdempotencyService {
 
     /**
      * Build idempotency response from hook responses and the response itself.
-     * @param res
-     * @param statusCode
-     * @param body
+     * Only whitelisted headers are kept to avoid storing sensitive information.
+     *
+     * @param res Express response object
+     * @param statusCode HTTP status code
+     * @param body Response body
+     * @returns Idempotency response with filtered headers
      */
     private buildIdempotencyResponse(
         res: express.Response,
         statusCode: number,
         body: any
     ): IdempotencyResponse {
-        const headerWhitelist: string[] = ['content-type'];
+        // Whitelist of response headers to preserve
+        const headerWhitelist = new Set([
+            // Content headers
+            'content-type',
+            'content-length',
+            'content-encoding',
+            'content-language',
+            'content-location',
+
+            // Caching headers
+            'cache-control',
+            'expires',
+            'etag',
+            'last-modified',
+            'vary',
+
+            // CORS headers
+            'access-control-allow-origin',
+            'access-control-allow-methods',
+            'access-control-allow-headers',
+            'access-control-expose-headers',
+            'access-control-allow-credentials',
+            'access-control-max-age',
+
+            // Other safe headers
+            'location',
+            'retry-after',
+        ]);
+
         const preliminaryHeaders = res.getHeaders();
 
-        // Keeps only whitelisted headers
+        // Keep only whitelisted headers (case-insensitive matching)
         const headers = Object.keys(preliminaryHeaders)
-            .filter((key) => headerWhitelist.includes(key))
+            .filter((key) => headerWhitelist.has(key.toLowerCase()))
             .reduce((obj: any, key) => {
                 obj[key] = preliminaryHeaders[key];
                 return obj;
