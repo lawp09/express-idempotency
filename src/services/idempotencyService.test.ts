@@ -773,14 +773,22 @@ describe('Idempotency service', () => {
             assert.equal(secondRes.getHeader('content-encoding'), 'gzip');
         });
 
-        it('preserves cache-control headers in cached response', async () => {
+        it('filters temporal headers (cache-control, expires, etag, retry-after) from cached response', async () => {
             const originalReq = createRequest();
             const firstReq = createCloneRequest(originalReq);
             const firstRes = httpMocks.createResponse();
 
-            firstRes.setHeader('cache-control', 'no-cache');
+            // Set temporal headers that should NOT be cached
+            firstRes.setHeader('content-type', 'application/json');
+            firstRes.setHeader('cache-control', 'max-age=300');
             firstRes.setHeader('expires', 'Wed, 21 Oct 2025 07:28:00 GMT');
             firstRes.setHeader('etag', '"abc123"');
+            firstRes.setHeader(
+                'last-modified',
+                'Wed, 21 Oct 2025 07:00:00 GMT'
+            );
+            firstRes.setHeader('vary', 'Accept-Encoding');
+            firstRes.setHeader('retry-after', '120');
 
             await idempotencyService.provideMiddlewareFunction(
                 firstReq,
@@ -798,12 +806,19 @@ describe('Idempotency service', () => {
                 sinon.spy()
             );
 
-            assert.equal(secondRes.getHeader('cache-control'), 'no-cache');
+            // Whitelisted header should be preserved
             assert.equal(
-                secondRes.getHeader('expires'),
-                'Wed, 21 Oct 2025 07:28:00 GMT'
+                secondRes.getHeader('content-type'),
+                'application/json'
             );
-            assert.equal(secondRes.getHeader('etag'), '"abc123"');
+
+            // Temporal headers should NOT be in cached response
+            assert.isUndefined(secondRes.getHeader('cache-control'));
+            assert.isUndefined(secondRes.getHeader('expires'));
+            assert.isUndefined(secondRes.getHeader('etag'));
+            assert.isUndefined(secondRes.getHeader('last-modified'));
+            assert.isUndefined(secondRes.getHeader('vary'));
+            assert.isUndefined(secondRes.getHeader('retry-after'));
         });
 
         it('preserves CORS headers in cached response', async () => {
@@ -845,13 +860,12 @@ describe('Idempotency service', () => {
             );
         });
 
-        it('preserves location and retry-after headers in cached response', async () => {
+        it('preserves location header in cached response', async () => {
             const originalReq = createRequest();
             const firstReq = createCloneRequest(originalReq);
             const firstRes = httpMocks.createResponse();
 
             firstRes.setHeader('location', 'https://example.com/resource');
-            firstRes.setHeader('retry-after', '120');
 
             await idempotencyService.provideMiddlewareFunction(
                 firstReq,
@@ -873,7 +887,6 @@ describe('Idempotency service', () => {
                 secondRes.getHeader('location'),
                 'https://example.com/resource'
             );
-            assert.equal(secondRes.getHeader('retry-after'), '120');
         });
 
         it('filters out non-whitelisted headers from cached response', async () => {

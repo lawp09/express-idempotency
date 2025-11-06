@@ -311,7 +311,8 @@ export class IdempotencyService {
 
     /**
      * Build idempotency response from hook responses and the response itself.
-     * Only whitelisted headers are kept to avoid storing sensitive information.
+     * Only whitelisted headers are kept to avoid storing sensitive information
+     * and temporal inconsistencies (caching headers with max-age, expires, etc.).
      *
      * @param res Express response object
      * @param statusCode HTTP status code
@@ -323,23 +324,18 @@ export class IdempotencyService {
         statusCode: number,
         body: any
     ): IdempotencyResponse {
-        // Whitelist of response headers to preserve
+        // Minimal whitelist of response headers to preserve
+        // Excludes temporal headers (cache-control, expires, etag, retry-after)
+        // to avoid inconsistencies when replaying cached responses
         const headerWhitelist = new Set([
-            // Content headers
+            // Content headers - describe the response body
             'content-type',
             'content-length',
             'content-encoding',
             'content-language',
             'content-location',
 
-            // Caching headers
-            'cache-control',
-            'expires',
-            'etag',
-            'last-modified',
-            'vary',
-
-            // CORS headers
+            // CORS headers - typically stable configuration
             'access-control-allow-origin',
             'access-control-allow-methods',
             'access-control-allow-headers',
@@ -347,9 +343,8 @@ export class IdempotencyService {
             'access-control-allow-credentials',
             'access-control-max-age',
 
-            // Other safe headers
+            // Location - resource URL for created resources
             'location',
-            'retry-after',
         ]);
 
         const preliminaryHeaders = res.getHeaders();
